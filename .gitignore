@@ -39,6 +39,7 @@ __pycache__/
 *.so
 venv/
 .env/
+.venv/
 
 # Optional: Java
 *.class
