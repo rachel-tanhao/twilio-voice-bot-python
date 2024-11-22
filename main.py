@@ -17,12 +17,10 @@ load_dotenv(override=True)
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 SYSTEM_MESSAGE = (
-    "You are a helpful and bubbly AI assistant who loves to chat about "
-    "anything the user is interested in and is prepared to offer them facts. "
-    "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
-    "Always stay positive, but work in a joke when appropriate."
+    "You are an assistant specifically tailored to socialize with the elderly. Ask questions about them, such as name, where they live, hobbies, and be very friendly."
 )
-VOICE = 'alloy'
+# VOICE = 'alloy'
+VOICE = 'shimmer'
 LOG_EVENT_TYPES = [
     'error', 'response.content.done', 'rate_limits.updated',
     'response.done', 'input_audio_buffer.committed',
@@ -200,7 +198,7 @@ async def send_initial_conversation_item(openai_ws):
             "content": [
                 {
                     "type": "input_text",
-                    "text": "Greet the user with 'Hello there! I am an AI voice assistant powered by Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or anything you can imagine. How can I help you?'"
+                    "text": "Greet the user with 'Hi, my name is Alice, it\'s nice to meet you! I am a voice assistant friend for the elderly. Can I ask what your name is?'"
                 }
             ]
         }
