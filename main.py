@@ -3,10 +3,11 @@ import json
 import base64
 import asyncio
 import websockets
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, WebSocket, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
+from twilio.rest import Client
 from dotenv import load_dotenv
 
 # pip install fastapi uvicorn python-dotenv websockets twilio
@@ -28,15 +29,25 @@ LOG_EVENT_TYPES = [
     'session.created'
 ]
 SHOW_TIMING_MATH = False
+# Load your Twilio credentials from environment variables
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+PHONE_NUMBER_FROM = os.getenv('TWILIO_PHONE_NUMBER')
+
+client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 app = FastAPI()
 
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
 
+
+
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
+
+
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
@@ -51,6 +62,35 @@ async def handle_incoming_call(request: Request):
     connect.stream(url=f'wss://{host}/media-stream')
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
+
+
+
+outboundTwiML = "<Response><Say>Thank you for calling! This is Alice. How are you doing?</Say></Response>"
+@app.post("/make-call")
+async def make_call(to: str):
+    """Make an outbound call to the specified number."""
+    try:
+        is_allowed = await is_number_allowed(to) # TODO: add the logic for is_number_allowed
+        if not is_allowed:
+            raise HTTPException(status_code=400, detail=f"The number {to} is not recognized as a valid outgoing number or caller ID.")
+
+        call = client.calls.create(
+            from_=PHONE_NUMBER_FROM,
+            to=to,
+            twiml=outboundTwiML,
+        )
+        return {"message": f"Call started with SID: {call.sid}"}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Error making call: {str(error)}") from None
+
+
+
+async def is_number_allowed(to: str) -> bool:
+    # TODO: add the logic for is_number_allowed
+    allowed_numbers = ["+1234567890", "+0987654321"]  # Example allowed numbers
+    return to in allowed_numbers
+
+
 
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
