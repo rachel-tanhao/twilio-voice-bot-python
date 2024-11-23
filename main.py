@@ -9,10 +9,15 @@ from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from twilio.rest import Client
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
-# pip install fastapi uvicorn python-dotenv websockets twilio
+# Load environment variables
+print("Loading environment variables...")
+load_dotenv()
 
-load_dotenv(override=True)
+
+app = FastAPI()
+
 
 # Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
@@ -32,7 +37,7 @@ SHOW_TIMING_MATH = False
 # Load your Twilio credentials from environment variables
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-PHONE_NUMBER_FROM = os.getenv('TWILIO_PHONE_NUMBER')
+PHONE_NUMBER_FROM = os.getenv('PHONE_NUMBER_FROM')
 
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
@@ -66,13 +71,21 @@ async def handle_incoming_call(request: Request):
 
 
 outboundTwiML = "<Response><Say>Thank you for calling! This is Alice. How are you doing?</Say></Response>"
+
+# Define a Pydantic model for the request body
+class CallRequest(BaseModel):
+    to: str
+
 @app.post("/make-call")
-async def make_call(to: str):
+async def make_call(call_request: CallRequest):
     """Make an outbound call to the specified number."""
+    to = call_request.to  # Extract the phone number from the request body
     try:
-        is_allowed = await is_number_allowed(to) # TODO: add the logic for is_number_allowed
+        is_allowed = await is_number_allowed(to)
         if not is_allowed:
             raise HTTPException(status_code=400, detail=f"The number {to} is not recognized as a valid outgoing number or caller ID.")
+        
+        print(f"PHONE_NUMBER_FROM: {PHONE_NUMBER_FROM}")  # Add for debugging
 
         call = client.calls.create(
             from_=PHONE_NUMBER_FROM,
@@ -87,7 +100,8 @@ async def make_call(to: str):
 
 async def is_number_allowed(to: str) -> bool:
     # TODO: add the logic for is_number_allowed
-    allowed_numbers = ["+1234567890", "+0987654321"]  # Example allowed numbers
+    allowed_numbers = ["+14452607227", "+0987654321"]  # Example allowed numbers
+    allowed_numbers.append(to)
     return to in allowed_numbers
 
 

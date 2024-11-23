@@ -48,3 +48,4 @@ target/
 # Optional: JavaScript
 .next/
 .nuxt/
+.gitignore_backup

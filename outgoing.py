@@ -6,13 +6,31 @@ import argparse
 from fastapi import FastAPI, WebSocket, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketDisconnect
+from contextlib import asynccontextmanager
 from twilio.rest import Client
 import websockets
 from dotenv import load_dotenv
 import uvicorn
 import re
 
+# Load environment variables
+print("Loading environment variables...")
 load_dotenv()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Perform startup actions
+    print("Lifespan started")
+    print("TWILIO_ACCOUNT_SID:", os.getenv("TWILIO_ACCOUNT_SID"))
+    print("TWILIO_AUTH_TOKEN:", os.getenv("TWILIO_AUTH_TOKEN"))
+    print("PHONE_NUMBER_FROM:", os.getenv("PHONE_NUMBER_FROM"))
+    
+    yield  # Start the app
+    
+    # Perform shutdown actions
+    print("Lifespan ending")
+
+app = FastAPI(lifespan=lifespan)
 
 # Configuration
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
@@ -22,7 +40,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 raw_domain = os.getenv('DOMAIN', '')
 DOMAIN = re.sub(r'(^\w+:|^)\/\/|\/+$', '', raw_domain) # Strip protocols and trailing slashes from DOMAIN
 
-PORT = int(os.getenv('PORT', 6060))
+PORT = int(os.getenv('PORT', 5050))
 SYSTEM_MESSAGE = (
     "You are a helpful and bubbly AI assistant who loves to chat about "
     "anything the user is interested in and is prepared to offer them facts. "
@@ -35,8 +53,6 @@ LOG_EVENT_TYPES = [
     'input_audio_buffer.committed', 'input_audio_buffer.speech_stopped',
     'input_audio_buffer.speech_started', 'session.created'
 ]
-
-app = FastAPI()
 
 if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and PHONE_NUMBER_FROM and OPENAI_API_KEY):
     raise ValueError('Missing Twilio and/or OpenAI environment variables. Please set them in the .env file.')
