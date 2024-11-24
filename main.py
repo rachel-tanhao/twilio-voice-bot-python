@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from voice_handler import handle_media_stream, handle_incoming_call, make_call
+from transcription_handler import router as transcription_router
 import uvicorn
 
 app = FastAPI()
@@ -8,6 +9,7 @@ app = FastAPI()
 app.add_api_route("/incoming-call", handle_incoming_call, methods=["POST"])
 app.websocket("/media-stream")(handle_media_stream)
 app.add_api_route("/make-call", make_call, methods=["POST"])
+app.include_router(transcription_router)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=6060)
