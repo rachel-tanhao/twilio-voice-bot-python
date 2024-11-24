@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect
 import re
+import openai
 
 # Load environment variables
 load_dotenv()
@@ -36,6 +37,16 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 async def index():
     """Health check endpoint."""
     return {"message": "Twilio Media Stream Server is running!"}
+
+
+
+async def transcribe_audio(audio_chunk):
+    """Use OpenAI Whisper API to transcribe audio."""
+    response = openai.Audio.transcribe(
+        model="whisper-1",
+        file=audio_chunk,
+    )
+    return response["text"]
 
 
 
@@ -119,10 +130,9 @@ async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
     response = VoiceResponse()
     response.say(
-        "Welcome to the AI assistant powered by Twilio and OpenAI. Please wait while we connect you."
+        "Welcome to My Old Friend - AI voice bot for the elderly. Let me connect to you to your old friend!"
     )
     response.pause(length=1)
-    response.say("You can start talking now.")
     host = request.url.hostname
     connect = Connect()
     connect.stream(url=f'wss://{host}/media-stream')
