@@ -26,7 +26,7 @@ PORT = int(os.getenv("PORT", 6060))
 SYSTEM_MESSAGE = (
     "You are a helpful AI voice assistant. Engage in friendly, thoughtful conversations."
 )
-VOICE = "shimmer"  # OpenAI voice model
+VOICE = "sage"  # OpenAI voice model
 LOG_EVENT_TYPES = ["error", "response.done", "input_audio_buffer.committed"]
 
 # Initialize Twilio client
@@ -130,7 +130,7 @@ async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
     response = VoiceResponse()
     response.say(
-        "Welcome to My Old Friend - AI voice bot for the elderly. Let me connect to you to your old friend!"
+        "Welcome to My Old Friend - AI voice bot for the elderly. Let me connect you to your old friend!"
     )
     response.pause(length=1)
     host = request.url.hostname
@@ -156,7 +156,6 @@ async def make_call(phone_number: str):
         twiml=outbound_twiml,
     )
     return {"message": f"Call initiated to {phone_number}", "callSid": call.sid}
-
 
 
 
