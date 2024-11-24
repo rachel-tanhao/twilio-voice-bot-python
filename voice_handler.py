@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect
+from transcription_handler import transcribe_audio_bytes
 import re
 import openai
 
@@ -40,13 +41,19 @@ async def index():
 
 
 
-async def transcribe_audio(audio_chunk):
-    """Use OpenAI Whisper API to transcribe audio."""
-    response = openai.Audio.transcribe(
-        model="whisper-1",
-        file=audio_chunk,
-    )
-    return response["text"]
+
+async def handle_audio_transcribe(audio_bytes):
+    """
+    Process incoming audio by transcribing it.
+    :param audio_bytes: The audio data as bytes.
+    :return: Transcription result.
+    """
+    transcription_result = await transcribe_audio_bytes(audio_bytes)
+    if "transcription" in transcription_result:
+        return transcription_result["transcription"]
+    else:
+        print(f"Error transcribing audio: {transcription_result['error']}")
+        return None
 
 
 
