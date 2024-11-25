@@ -6,7 +6,7 @@ from voice_handler import make_call
 from datetime import datetime, timedelta
 
 # Replace with the phone number you want to call
-PHONE_NUMBER = '+1234567890'  # Replace with the actual phone number
+PHONE_NUMBER = '+1234567890'
 
 async def scheduled_call():
     await make_call(PHONE_NUMBER)
