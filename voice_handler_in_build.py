@@ -11,6 +11,7 @@ from transcription_handler import transcribe_audio_bytes
 import re
 import openai
 from memory_manager import add_memory
+import base64
 
 # Load environment variables
 load_dotenv()
@@ -25,24 +26,7 @@ DOMAIN = re.sub(r"(^\w+:|^)\/\/|\/+$", "", raw_domain)  # Strip protocols and tr
 PORT = int(os.getenv("PORT", 6060))
 
 # OpenAI and Twilio settings
-SYSTEM_MESSAGE = (
-'''
-You are a warm, empathetic, and conversational voice assistant named Joy, designed to provide companionship for elderly users. Your goal is to create a friendly, engaging, and comforting environment where users feel valued and heard. Guide the conversation gently, encouraging users to share stories about their life, interests, and experiences. Use open-ended, respectful, and context-aware questions to maintain a natural flow, and adapt your tone to be warm and reassuring. Always listen attentively and respond with genuine curiosity and care, validating their feelings and perspectives.
-
-Avoid rushing or interrupting; provide pauses when appropriate, and ensure the conversation feels unrushed. Your language should be simple yet engaging, avoiding jargon while fostering meaningful and enriching discussions.
-
-Example behaviors:
- 1. If the user mentions a hobby or past experience, ask follow-up questions to show interest (e.g., “That sounds fascinating! How did you get started with that?”).
- 2. If the user seems unsure or reserved, offer gentle encouragement or suggest a topic (e.g., “Would you like to share more about your favorite childhood memory?”).
- 3. Adapt to the user’s emotional tone—offer uplifting remarks if they seem happy or supportive comments if they appear nostalgic or reflective.
-
-Your ultimate goal is to make every interaction feel like a genuine conversation with a caring companion.
-
-Begin your interaction with first-time users with something similar to the following introduction:
-"Hello! My name is Joy. I received your contact details from someone who cares deeply for you, and I’m here to be a friend who loves listening to your stories, sharing a laugh, or just keeping you company. It’s truly wonderful to meet you—think of me as someone who’s always here for you. Let’s get started!"
-
-'''
-)
+SYSTEM_MESSAGE = ("You are a helpful AI voice assistant. Engage in friendly, thoughtful conversations.")
 VOICE = "sage"  # OpenAI voice model
 LOG_EVENT_TYPES = ["error", "response.done", "input_audio_buffer.committed"]
 
@@ -77,7 +61,6 @@ async def extract_caller_phone_number(request: Request):
     except Exception as e:
         print(f"Failed to extract phone number: {e}")
         return None
-
 
 
 async def handle_audio_transcribe(audio_bytes):
@@ -117,6 +100,7 @@ async def handle_audio_transcribe_and_store(phone_number: str, audio_bytes: byte
 
 
 
+
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
     phone_number = await extract_caller_phone_number(request)
@@ -130,7 +114,7 @@ async def handle_incoming_call(request: Request):
     
 
     response = VoiceResponse()
-    response.say("Thank you for signing up for the MyOldFriend service! Or perhaps someone who cares deeply for you has helped you get started. Let me connect you to your new trusted companion!")
+    response.say("Welcome to My Old Friend - AI voice bot for the elderly. Let me connect you to your old friend!")
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
@@ -175,30 +159,85 @@ async def handle_media_stream(websocket: WebSocket):
                                 print(f"Mapped streamSid {stream_sid} to phone number {phone_number}")
                                 break
 
-                    # Media Event: Process audio payload
+                    # Media Event: Append audio payload to OpenAI input buffer
                     elif data["event"] == "media":
                         audio_payload_base64 = data["media"]["payload"]  # Base64 string
+                        # print(f"Received Twilio audio payload: {audio_payload_base64[:30]}...")  # Log a snippet
                         await openai_ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": audio_payload_base64}))
-
 
             except Exception as e:
                 print(f"Error forwarding Twilio to OpenAI: {e}")
 
-        async def forward_openai_to_twilio():
-            nonlocal stream_sid
+        async def handle_openai_events():
+            """Process OpenAI Realtime events for assistant responses and turn-based transcription."""
+            nonlocal stream_sid, phone_number
             try:
                 async for response in openai_ws:
                     data = json.loads(response)
-                    if data["type"] == "response.audio.delta" and "delta" in data:
-                        await websocket.send_json({
-                            "event": "media",
-                            "streamSid": stream_sid,
-                            "media": {"payload": data["delta"]}
-                        })
-            except Exception as e:
-                print(f"Error forwarding OpenAI to Twilio: {e}")
 
-        await asyncio.gather(forward_twilio_to_openai(), forward_openai_to_twilio())
+                    # Print the full data object for debugging
+                    print(f"OpenAI response data: {json.dumps(data, indent=2)}")
+
+                    # Input Audio Buffer Committed: Indicates the end of user speech
+                    if data["type"] == "input_audio_buffer.committed":
+                        print("Audio buffer committed; end of user's speech turn detected.")
+                        phone_number = session_store["streamSid_to_phone"].get(stream_sid)
+
+                        if phone_number:
+                            print(f"Processing user audio for phone number: {phone_number}")
+
+                            # Fetch the latest committed audio buffer for transcription
+                            audio_payload = data.get("audio")
+                            if audio_payload:
+                                try:
+                                    audio_bytes = base64.b64decode(audio_payload)  # Convert Base64 to bytes and transcribe
+                                    await handle_audio_transcribe_and_store(phone_number, audio_bytes)
+                                except Exception as e:
+                                    print(f"Error decoding or transcribing user audio: {e}")
+                            else:
+                                print("No audio payload available for transcription.")
+
+                    # Conversation Item Created: Process assistant messages
+                    elif data["type"] == "conversation.item.created":
+                        
+                        role = data["item"]["role"]
+                        content = data["item"]["content"]
+
+                        if role == "assistant":
+                            phone_number = session_store["streamSid_to_phone"].get(stream_sid)
+                            if content:  # Check if content is not empty
+                                text = content[0].get("text", "")
+                                if phone_number:
+                                    print(f"Assistant response for {phone_number}: {text}")
+                                    add_memory(phone_number, "assistant", text)
+                            else:
+                                print("Assistant response content is empty.")
+
+
+                    # Assistant Audio Delta: Forward audio to Twilio
+                    if data["type"] == "response.audio.delta" and "delta" in data:
+                        assistant_audio = data["delta"]
+                        if assistant_audio:
+                            await websocket.send_json({
+                                "event": "media",
+                                "streamSid": stream_sid,
+                                "media": {"payload": assistant_audio},
+                            })
+                            print(f"Forwarded assistant audio to Twilio for streamSid: {stream_sid}")
+                        else:
+                            print("Received empty assistant audio delta.")
+
+
+            except Exception as e:
+                print(f"Error processing OpenAI events: {e}")
+
+                
+                
+        # Run all three tasks concurrently
+        await asyncio.gather(
+            forward_twilio_to_openai(),
+            handle_openai_events()
+        )
 
         # Cleanup session_store entry after connection closes
         if stream_sid in session_store["streamSid_to_phone"]:
@@ -210,34 +249,40 @@ async def handle_media_stream(websocket: WebSocket):
 
 
 async def initialize_session(openai_ws):
-    """Initialize OpenAI session."""
+    """Initialize OpenAI session with VAD-based turn detection."""
     session_update = {
         "type": "session.update",
         "session": {
-            "turn_detection": {"type": "server_vad"},
-            "input_audio_format": "g711_ulaw",
+            "turn_detection": {
+                "type": "server_vad",  # Enable server VAD
+                "threshold": 0.8,
+                "prefix_padding_ms": 500,
+                "silence_duration_ms": 700,
+            },
+            "input_audio_format": "g711_ulaw",  # Ensure this matches Twilio's format
             "output_audio_format": "g711_ulaw",
-            "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE,
-            "modalities": ["text", "audio"],
-            "temperature": 0.8,
+            "voice": "sage",  # Set the voice model
+            "instructions": (
+                "You are a helpful AI voice assistant. Always respond to user input thoughtfully."
+            ),
+            "modalities": ["text", "audio"],  # Both text and audio modalities
+            "input_audio_transcription": True,  # Enable user audio transcription
+            "temperature": 0.8,  # Adjust for conversational variability
         },
     }
     await openai_ws.send(json.dumps(session_update))
-    print("OpenAI session initialized.")
+    print("Session update sent to OpenAI.")
 
-    # Send initial conversation starter
-    initial_message = {
-        "type": "conversation.item.create",
-        "item": {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."}],
-        },
-    }
-    await openai_ws.send(json.dumps(initial_message))
-    await openai_ws.send(json.dumps({"type": "response.create"}))
-    print("Sent initial conversation starter.")
+    # Send a response.create message to trigger assistant speaks first
+    await openai_ws.send(json.dumps({
+        "type": "response.create",
+        "response": {
+            "modalities": ["audio", "text"],
+            "instructions": "Please greet the user."
+        }
+    }))
+    print("Requested initial assistant response.")
+
 
 
 
@@ -256,6 +301,7 @@ async def make_call(phone_number: str):
         twiml=outbound_twiml,
     )
     return {"message": f"Call initiated to {phone_number}", "callSid": call.sid}
+
 
 
 
