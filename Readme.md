@@ -78,6 +78,10 @@ cp .env.example .env
 
 In the .env file, update the `OPENAI_API_KEY` to your OpenAI API key from the **Prerequisites**.
 
+### Update the URL in the Voice Configuration tab on Twilio
+Change the url in the voice config tab to the ngrok forwarding link once you start your ngrok server.
+Make sure to keep the /incoming-call after the forwarding url.
+
 ## Run the app
 Once ngrok is running, dependencies are installed, Twilio is configured properly, and the `.env` is set up, run the dev server with the following command:
 ```
