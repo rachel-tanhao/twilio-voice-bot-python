@@ -208,6 +208,18 @@ async def handle_media_stream(websocket: WebSocket):
                         full_transcript += data["delta"]
                         print(f"Current Transcript: {full_transcript}")
 
+                    # Handle transcript completion
+                    elif data["type"] == "response.audio_transcript.done":
+                        print(f"Final Transcript: {full_transcript}")
+                        # Optionally forward the final transcript to Twilio or other services
+                        await websocket.send_json({
+                            "event": "final_transcript",
+                            "streamSid": stream_sid,
+                            "transcript": full_transcript,
+                        })
+                        # Reset transcript for next interaction if needed
+                        full_transcript = ""
+
             except Exception as e:
                 print(f"Error forwarding OpenAI to Twilio: {e}")
 
