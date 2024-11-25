@@ -19,6 +19,7 @@ To use the app, you will  need:
 - **A Twilio number with _Voice_ capabilities.** [Here are instructions](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console) to purchase a phone number.
 - **An OpenAI account and an OpenAI API Key.** You can sign up [here](https://platform.openai.com/).
   - **OpenAI Realtime API access.**
+- **Mem0 AI Account and API Key+** You can sign up [here](https://mem0.ai/).
 
 ## Local Setup
 
