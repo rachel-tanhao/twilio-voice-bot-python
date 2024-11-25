@@ -49,3 +49,4 @@ target/
 .next/
 .nuxt/
 .gitignore_backup
+/.venv
