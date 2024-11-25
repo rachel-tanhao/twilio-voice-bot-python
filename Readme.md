@@ -94,3 +94,15 @@ To have the AI voice assistant talk before the user, uncomment the line `# await
 When the user speaks and OpenAI sends `input_audio_buffer.speech_started`, the code will clear the Twilio Media Streams buffer and send OpenAI `conversation.item.truncate`.
 
 Depending on your application's needs, you may want to use the [`input_audio_buffer.speech_stopped`](https://platform.openai.com/docs/api-reference/realtime-server-events/input-audio-buffer-speech-stopped) event, instead, os a combination of the two.
+
+
+### Automatically calling at two times every day
+To have the AI voice assistant call the user automatically twice per day:
+
+- In `driver.py`, replace the placeholder phone number with the actual phone number you wish to call:
+
+  ```python:driver.py
+  PHONE_NUMBER = '+1234567890'  # Replace with the recipient's phone number
+  ```
+- By default, the `driver.py` function will call at 9am and 6pm everyday if the file is running. To change 
+  the times that the user is called, change the values of hour and minute.
