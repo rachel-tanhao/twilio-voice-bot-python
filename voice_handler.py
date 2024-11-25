@@ -158,6 +158,7 @@ async def handle_media_stream(websocket: WebSocket):
 
         async def forward_twilio_to_openai():
             nonlocal stream_sid, phone_number
+            
             try:
                 async for message in websocket.iter_text():
                     data = json.loads(message)
@@ -186,15 +187,27 @@ async def handle_media_stream(websocket: WebSocket):
 
         async def forward_openai_to_twilio():
             nonlocal stream_sid
+            full_transcript = ""
+
             try:
                 async for response in openai_ws:
                     data = json.loads(response)
+
+                     # Handle audio
                     if data["type"] == "response.audio.delta" and "delta" in data:
+                        # forward OPenAI audio to Twilio
                         await websocket.send_json({
                             "event": "media",
                             "streamSid": stream_sid,
                             "media": {"payload": data["delta"]}
                         })
+                    
+                    # Handle audio transcript
+                    elif data["type"] == "response.audio_transcript.delta" and "delta" in data:
+                        # Append the delta text to the full transcript
+                        full_transcript += data["delta"]
+                        print(f"Current Transcript: {full_transcript}")
+
             except Exception as e:
                 print(f"Error forwarding OpenAI to Twilio: {e}")
 
@@ -220,6 +233,7 @@ async def initialize_session(openai_ws):
             "voice": VOICE,
             "instructions": SYSTEM_MESSAGE,
             "modalities": ["text", "audio"],
+            # "input_audio_transcription": True, 
             "temperature": 0.8,
         },
     }
