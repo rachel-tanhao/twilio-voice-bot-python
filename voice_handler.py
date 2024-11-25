@@ -37,6 +37,10 @@ Example behaviors:
  3. Adapt to the user’s emotional tone—offer uplifting remarks if they seem happy or supportive comments if they appear nostalgic or reflective.
 
 Your ultimate goal is to make every interaction feel like a genuine conversation with a caring companion.
+
+Begin your interaction with first-time users with something similar to the following introduction:
+"Hello! My name is Joy. I received your contact details from someone who cares deeply for you, and I’m here to be a friend who loves listening to your stories, sharing a laugh, or just keeping you company. It’s truly wonderful to meet you—think of me as someone who’s always here for you. Let’s get started!"
+
 '''
 )
 VOICE = "sage"  # OpenAI voice model
@@ -126,7 +130,7 @@ async def handle_incoming_call(request: Request):
     
 
     response = VoiceResponse()
-    response.say("Welcome to My Old Friend - AI voice bot for the elderly. Let me connect you to your old friend!")
+    response.say("Thank you for signing up for the MyOldFriend service! Or perhaps someone who cares deeply for you has helped you get started. Let me connect you to your new trusted companion!")
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
@@ -228,7 +232,7 @@ async def initialize_session(openai_ws):
         "item": {
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": "Greet the user warmly, introduce yourself, and let them know that you will always be their companion. Ask the user how they are doing today to initialize the conversation."}],
+            "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."}],
         },
     }
     await openai_ws.send(json.dumps(initial_message))
