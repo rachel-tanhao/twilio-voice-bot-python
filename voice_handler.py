@@ -130,7 +130,9 @@ async def handle_incoming_call(request: Request):
     
 
     response = VoiceResponse()
-    response.say("Welcome to My Old Friend - AI companion for the Elderly. Thank you for signing up for our service! Or perhaps someone who cares deeply for you has helped you get started. Now, let me connect you to your new trusted companion!")
+    #response.say("Welcome to My Old Friend - AI companion for the Elderly. Thank you for signing up for our service! Or perhaps someone who cares deeply for you has helped you get started. Now, let me connect you to your new trusted companion!")
+    # Reduce amount of words for testing
+    response.say("Welcome to My Old Friend")
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
@@ -185,59 +187,55 @@ async def handle_media_stream(websocket: WebSocket):
             except Exception as e:
                 print(f"Error forwarding Twilio to OpenAI: {e}")
 
-        async def forward_openai_to_twilio():
-            nonlocal stream_sid, phone_number
-            full_transcript = ""
 
+        # Function to receive messages from OpenAI and handle them
+        async def receive_and_handle_from_openai():
             try:
+                conversation_file = f"conversations/{stream_sid}.txt"  # Create unique file per call
+                os.makedirs("conversations", exist_ok=True)  # Create directory if it doesn't exist
+
                 async for response in openai_ws:
                     data = json.loads(response)
+                    
+                    # Handle user's completed transcription
+                    if data.get("type") == "conversation.item.input_audio_transcription.completed":
+                        user_transcription = data.get("transcript", "")
+                        if user_transcription:
+                            print(f"\nUser said: {user_transcription}")
+                            
+                            # Write to file
+                            with open(conversation_file, "a", encoding="utf-8") as f:
+                                f.write(f"User: {user_transcription}\n")
+                            # # Optionally store the transcription
+                            # if stream_sid in session_store["streamSid_to_phone"]:
+                            #     phone_number = session_store["streamSid_to_phone"][stream_sid]
+                            #     add_memory(phone_number, "user", user_transcription)
 
-                     # Handle audio
-                    if data["type"] == "response.audio.delta" and "delta" in data:
-                        # forward OPenAI audio to Twilio
+                    # Handle assistant's completed transcript
+                    elif data.get("type") == "response.audio_transcript.done":
+                        assistant_transcript = data.get("transcript", "")
+                        if assistant_transcript:
+                            print(f"\nAssistant: {assistant_transcript}\n")
+                            # Write to file
+                            with open(conversation_file, "a", encoding="utf-8") as f:
+                                f.write(f"Assistant: {assistant_transcript}\n\n")
+
+                    # Handle audio payload (needed for voice output)
+                    elif data.get("type") == "response.audio.delta" and "delta" in data:
+                        audio_payload = data["delta"]
                         await websocket.send_json({
                             "event": "media",
                             "streamSid": stream_sid,
-                            "media": {"payload": data["delta"]}
+                            "media": {"payload": audio_payload}
                         })
-                    
-                    # Handle assistant's audio transcript
-                    elif data["type"] == "response.audio_transcript.delta" and "delta" in data:
-                        # Append the delta text to the full transcript
-                        full_transcript += data["delta"]
-                        print(f"Current Transcript: {full_transcript}")
-                    
-                    # Handle user's transcription
-                    elif data["type"] == "input.audio_transcription.delta" and "delta" in data:
-                        # Append the delta to the user's transcript
-                        full_transcript += data["delta"]
-                        print(f"User Transcription Partial: {full_transcript}")
-
-
-                    # Handle transcript completion
-                    elif data["type"] == "response.audio_transcript.done":
-                        print(f"Final Transcript: {full_transcript}")
-
-                                                # Optionally, store the transcription using your memory manager
-                        phone_number = session_store["streamSid_to_phone"].get(stream_sid)
-                        if phone_number:
-                            add_memory(phone_number, "user", full_transcript)
-                            print(f"Stored transcription for {phone_number}: {full_transcript}")
-                            
-                        # Optionally forward the final transcript to Twilio or other services
-                        await websocket.send_json({
-                            "event": "final_transcript",
-                            "streamSid": stream_sid,
-                            "transcript": full_transcript,
-                        })
-                        # Reset transcript for next interaction if needed
-                        full_transcript = ""
 
             except Exception as e:
-                print(f"Error forwarding OpenAI to Twilio: {e}")
+                print(f"Error receiving from OpenAI: {e}")
 
-        await asyncio.gather(forward_twilio_to_openai(), forward_openai_to_twilio())
+        await asyncio.gather(
+            forward_twilio_to_openai(),
+            receive_and_handle_from_openai(),
+        )
 
         # Cleanup session_store entry after connection closes
         if stream_sid in session_store["streamSid_to_phone"]:
@@ -259,7 +257,7 @@ async def initialize_session(openai_ws):
             "voice": VOICE,
             "instructions": SYSTEM_MESSAGE,
             "modalities": ["text", "audio"],
-            #"input_audio_transcription": True,  # Enable user audio transcription
+            "input_audio_transcription": {"model": "whisper-1"},  # Enable user audio transcription
             "temperature": 0.8,
         },
     }
@@ -272,7 +270,7 @@ async def initialize_session(openai_ws):
         "item": {
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today, and did they have a good sleep last night."}],
+            "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."}],
         },
     }
     await openai_ws.send(json.dumps(initial_message))
