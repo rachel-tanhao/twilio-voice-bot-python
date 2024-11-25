@@ -130,7 +130,7 @@ async def handle_incoming_call(request: Request):
     
 
     response = VoiceResponse()
-    response.say("Thank you for signing up for the MyOldFriend service! Or perhaps someone who cares deeply for you has helped you get started. Let me connect you to your new trusted companion!")
+    response.say("Welcome to My Old Friend - AI companion for the Elderly. Thank you for signing up for our service! Or perhaps someone who cares deeply for you has helped you get started. Now, let me connect you to your new trusted companion!")
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
@@ -232,7 +232,7 @@ async def initialize_session(openai_ws):
         "item": {
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."}],
+            "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today, and did they have a good sleep last night."}],
         },
     }
     await openai_ws.send(json.dumps(initial_message))
