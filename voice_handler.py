@@ -186,7 +186,7 @@ async def handle_media_stream(websocket: WebSocket):
                 print(f"Error forwarding Twilio to OpenAI: {e}")
 
         async def forward_openai_to_twilio():
-            nonlocal stream_sid
+            nonlocal stream_sid, phone_number
             full_transcript = ""
 
             try:
@@ -202,15 +202,29 @@ async def handle_media_stream(websocket: WebSocket):
                             "media": {"payload": data["delta"]}
                         })
                     
-                    # Handle audio transcript
+                    # Handle assistant's audio transcript
                     elif data["type"] == "response.audio_transcript.delta" and "delta" in data:
                         # Append the delta text to the full transcript
                         full_transcript += data["delta"]
                         print(f"Current Transcript: {full_transcript}")
+                    
+                    # Handle user's transcription
+                    elif data["type"] == "input.audio_transcription.delta" and "delta" in data:
+                        # Append the delta to the user's transcript
+                        user_transcript += data["delta"]
+                        print(f"User Transcription Partial: {user_transcript}")
+
 
                     # Handle transcript completion
                     elif data["type"] == "response.audio_transcript.done":
                         print(f"Final Transcript: {full_transcript}")
+
+                                                # Optionally, store the transcription using your memory manager
+                        phone_number = session_store["streamSid_to_phone"].get(stream_sid)
+                        if phone_number:
+                            add_memory(phone_number, "user", user_transcript)
+                            print(f"Stored transcription for {phone_number}: {user_transcript}")
+                            
                         # Optionally forward the final transcript to Twilio or other services
                         await websocket.send_json({
                             "event": "final_transcript",
@@ -245,7 +259,7 @@ async def initialize_session(openai_ws):
             "voice": VOICE,
             "instructions": SYSTEM_MESSAGE,
             "modalities": ["text", "audio"],
-            # "input_audio_transcription": True, 
+            "input_audio_transcription": True,  # Enable user audio transcription
             "temperature": 0.8,
         },
     }
