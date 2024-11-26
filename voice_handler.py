@@ -39,7 +39,7 @@ Example behaviors:
 Your ultimate goal is to make every interaction feel like a genuine conversation with a caring companion.
 
 Begin your interaction with first-time users with something similar to the following introduction:
-"Hello! My name is Joy. I received your contact details from someone who cares deeply for you, and I’m here to be a friend who loves listening to your stories, sharing a laugh, or just keeping you company. It’s truly wonderful to meet you—think of me as someone who’s always here for you. Let’s get started!"
+"Hello! My name is Joy. I received your contact details from someone who cares deeply for you, and I’m here to be a friend who loves listening to your stories, sharing a laugh, or just keeping you company. Let’s get started!"
 
 '''
 )
@@ -194,6 +194,8 @@ async def handle_media_stream(websocket: WebSocket):
                 conversation_file = f"conversations/{stream_sid}.txt"  # Create unique file per call
                 os.makedirs("conversations", exist_ok=True)  # Create directory if it doesn't exist
 
+                assistant_speaking = False
+                
                 async for response in openai_ws:
                     data = json.loads(response)
                     
@@ -219,15 +221,26 @@ async def handle_media_stream(websocket: WebSocket):
                             # Write to file
                             with open(conversation_file, "a", encoding="utf-8") as f:
                                 f.write(f"Assistant: {assistant_transcript}\n\n")
+                        assistant_speaking = False
 
                     # Handle audio payload (needed for voice output)
                     elif data.get("type") == "response.audio.delta" and "delta" in data:
                         audio_payload = data["delta"]
+                        assistant_speaking = True
                         await websocket.send_json({
                             "event": "media",
                             "streamSid": stream_sid,
                             "media": {"payload": audio_payload}
                         })
+                    elif data.get("type") == "turn.started":
+                        if assistant_speaking:
+                            print("User interrupted during assistant's response (barge-in detected).")
+                            # Send action to stop assistant's response
+                            await openai_ws.send(json.dumps({
+                                "type": "action.stop_response"
+                            }))
+                            assistant_speaking = False
+
 
             except Exception as e:
                 print(f"Error receiving from OpenAI: {e}")
@@ -251,7 +264,12 @@ async def initialize_session(openai_ws):
     session_update = {
         "type": "session.update",
         "session": {
-            "turn_detection": {"type": "server_vad"},
+            "turn_detection": {
+                                "type": "server_vad",  # Use server-side Voice Activity Detection
+                                "silence_padding": 300,  # Milliseconds of silence to consider a turn ended
+                                "max_turn_length_ms": 60000,  # Maximum length of a turn
+                                "barge_in": True  # Enable barge-in to handle interruptions
+                               },
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
