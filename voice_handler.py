@@ -138,6 +138,7 @@ For returning users, begin with something like:
     if is_returning_user and phone_number:
         conversation_history = get_recent_conversation_history(phone_number)
         if conversation_history:
+            print("\n\nUSING CONVERSATION HISTORY \n\n")
             base_message += f"\n\nUse the following conversation history to provide context and personalization to your responses. Reference previous topics naturally, but don't explicitly mention that you're using conversation history:{conversation_history}"
     
     return base_message
