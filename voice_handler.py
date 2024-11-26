@@ -14,6 +14,8 @@ from memory_manager import add_memory
 import base64
 from datetime import datetime
 import os
+from fastapi.websockets import WebSocketDisconnect
+
 
 # Load environment variables
 load_dotenv()
@@ -119,20 +121,22 @@ async def handle_audio_transcribe_and_store(phone_number: str, audio_bytes: byte
         print(f"Error handling audio transcription: {e}")
         return None
 
-def save_transcription(phone_number: str, speaker: str, text: str):
+def save_transcription(phone_number: str, speaker: str, text: str, stream_sid, is_start=False, is_end=False):
     """Save transcription to a file with timestamp."""
-    # Create logs directory if it doesn't exist
     os.makedirs('transcription_logs', exist_ok=True)
     
-    # Create filename with date
     date = datetime.now().strftime('%Y-%m-%d')
-    filename = f'transcription_logs/{phone_number}_{date}.txt'
-    
-    # Add timestamp to message
+    filename = f'transcription_logs/{phone_number}_{date}_{stream_sid}.txt'
     timestamp = datetime.now().strftime('%H:%M:%S')
-    message = f'[{timestamp}] {speaker}: {text}\n'
     
-    # Append to file
+    # Special messages for start/end of conversation
+    if is_start:
+        message = f"\n{'='*50}\n[{timestamp}] === CONVERSATION STARTED ===\n{'='*50}\n"
+    elif is_end:
+        message = f"\n{'='*50}\n[{timestamp}] === CONVERSATION ENDED ===\n{'='*50}\n"
+    else:
+        message = f'[{timestamp}] {speaker}: {text}\n'
+    
     with open(filename, 'a', encoding='utf-8') as f:
         f.write(message)
 
@@ -184,9 +188,12 @@ async def handle_media_stream(websocket: WebSocket):
         mark_queue = []
         response_start_timestamp_twilio = None
         
+        # Mark conversation start
+        phone_number = None  # Will be set when we get the stream_sid
+        
         async def receive_from_twilio():
             """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
-            nonlocal stream_sid, latest_media_timestamp
+            nonlocal stream_sid, latest_media_timestamp, phone_number
             try:
                 async for message in websocket.iter_text():
                     data = json.loads(message)
@@ -199,6 +206,16 @@ async def handle_media_stream(websocket: WebSocket):
                         await openai_ws.send(json.dumps(audio_append))
                     elif data['event'] == 'start':
                         stream_sid = data['start']['streamSid']
+                        # Find the phone number from the stored mapping
+                        for phone, sid in session_store["phone_to_streamSid"].items():
+                            if sid is None:  # This is our pending call
+                                session_store["phone_to_streamSid"][phone] = stream_sid
+                                session_store["streamSid_to_phone"][stream_sid] = phone
+                                phone_number = phone
+                                break
+                        
+                        if phone_number:
+                            save_transcription(phone_number, "", "", stream_sid, is_start=True)
                         print(f"Incoming stream has started {stream_sid}")
                         response_start_timestamp_twilio = None
                         latest_media_timestamp = 0
@@ -207,6 +224,8 @@ async def handle_media_stream(websocket: WebSocket):
                         if mark_queue:
                             mark_queue.pop(0)
             except WebSocketDisconnect:
+                if phone_number:
+                    save_transcription(phone_number, "", "", is_end=True)
                 print("Client disconnected.")
                 if openai_ws.open:
                     await openai_ws.close()
@@ -217,24 +236,24 @@ async def handle_media_stream(websocket: WebSocket):
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
+                    phone_number = session_store["streamSid_to_phone"].get(stream_sid)
                     if response['type'] in LOG_EVENT_TYPES:
                         print(f"Received event: {response['type']}", response)
 
+                    # Handle user's completed transcript
                     if response.get("type") == "conversation.item.input_audio_transcription.completed":
                         user_transcription = response.get("transcript", "")
                         if user_transcription:
-                            phone_number = session_store["streamSid_to_phone"].get(stream_sid)
                             print(f"\nUser said: {user_transcription}")
-                            save_transcription(phone_number, "User", user_transcription)
+                            save_transcription(phone_number, "User", user_transcription, stream_sid)
 
-
-                    # if response.get('type') == 'input_audio_buffer.transcription':
-                    #     transcription = response.get('text', '')
-                    #     phone_number = session_store["streamSid_to_phone"].get(stream_sid)
-                    #     if phone_number and transcription:
-                    #         print(f"User said: {transcription}")
-                    #         # Store in memory
-                    #         #add_memory(phone_number, "user", transcription)
+                    # Handle assistant's completed transcript
+                    if response.get("type") == "response.audio_transcript.done":
+                        assistant_transcript = response.get("transcript", "")
+                        if assistant_transcript:
+                            print(f"\nAssistant: {assistant_transcript}\n")
+                            # Write to file
+                            save_transcription(phone_number, "Assistant", assistant_transcript, stream_sid)
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
