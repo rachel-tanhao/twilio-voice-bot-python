@@ -11,6 +11,11 @@ from transcription_handler import transcribe_audio_bytes
 import re
 import openai
 from memory_manager import add_memory
+import base64
+from datetime import datetime
+import os
+from fastapi.websockets import WebSocketDisconnect
+
 
 # Load environment variables
 load_dotenv()
@@ -44,7 +49,8 @@ Begin your interaction with first-time users with something similar to the follo
 '''
 )
 VOICE = "sage"  # OpenAI voice model
-LOG_EVENT_TYPES = ["error", "response.done", "input_audio_buffer.committed"]
+LOG_EVENT_TYPES = ["error", "response.done", "input_audio_buffer.committed", "input_audio_buffer.transcription"]
+SHOW_TIMING_MATH = False
 
 # Initialize Twilio client
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -108,14 +114,31 @@ async def handle_audio_transcribe_and_store(phone_number: str, audio_bytes: byte
             raise RuntimeError("Transcription is empty or invalid.")
 
         # Add transcription to memory
-        add_memory(phone_number, "user", transcription)
+        #add_memory(phone_number, "user", transcription)
         print(f"Stored transcription for {phone_number}: {transcription}")
         return transcription
     except Exception as e:
         print(f"Error handling audio transcription: {e}")
         return None
 
-
+def save_transcription(phone_number: str, speaker: str, text: str, stream_sid, is_start=False, is_end=False):
+    """Save transcription to a file with timestamp."""
+    os.makedirs('transcription_logs', exist_ok=True)
+    
+    date = datetime.now().strftime('%Y-%m-%d')
+    filename = f'transcription_logs/{phone_number}_{date}_{stream_sid}.txt'
+    timestamp = datetime.now().strftime('%H:%M:%S')
+    
+    # Special messages for start/end of conversation
+    if is_start:
+        message = f"\n{'='*50}\n[{timestamp}] === CONVERSATION STARTED ===\n{'='*50}\n"
+    elif is_end:
+        message = f"\n{'='*50}\n[{timestamp}] === CONVERSATION ENDED ===\n{'='*50}\n"
+    else:
+        message = f'[{timestamp}] {speaker}: {text}\n'
+    
+    with open(filename, 'a', encoding='utf-8') as f:
+        f.write(message)
 
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
@@ -145,105 +168,165 @@ async def handle_incoming_call(request: Request):
 
 
 async def handle_media_stream(websocket: WebSocket):
-    """WebSocket for Twilio Media Streams and OpenAI Realtime API."""
+    """Handle WebSocket connections between Twilio and OpenAI."""
+    print("Client connected")
     await websocket.accept()
 
     async with websockets.connect(
-        "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
+        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
         extra_headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "OpenAI-Beta": "realtime=v1",
-        },
+            "OpenAI-Beta": "realtime=v1"
+        }
     ) as openai_ws:
         await initialize_session(openai_ws)
-        stream_sid, phone_number = None, None
 
-        async def forward_twilio_to_openai():
-            nonlocal stream_sid, phone_number
-            
+        # Connection specific state
+        stream_sid = None
+        latest_media_timestamp = 0
+        last_assistant_item = None
+        mark_queue = []
+        response_start_timestamp_twilio = None
+        
+        # Mark conversation start
+        phone_number = None  # Will be set when we get the stream_sid
+        
+        async def receive_from_twilio():
+            """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
+            nonlocal stream_sid, latest_media_timestamp, phone_number
             try:
                 async for message in websocket.iter_text():
                     data = json.loads(message)
-                    
-                    # Start Event: Capture streamSid and associate with phone number
-                    if data["event"] == "start":
-                        stream_sid = data["start"]["streamSid"]
-                        print(f"Stream started with SID: {stream_sid}")
-
-                        # Map streamSid to phone_number
-                        for phone_number, sid in session_store["phone_to_streamSid"].items():
-                            if sid is None:
-                                session_store["streamSid_to_phone"][stream_sid] = phone_number
-                                session_store["phone_to_streamSid"][phone_number] = stream_sid
-                                print(f"Mapped streamSid {stream_sid} to phone number {phone_number}")
+                    if data['event'] == 'media' and openai_ws.open:
+                        latest_media_timestamp = int(data['media']['timestamp'])
+                        audio_append = {
+                            "type": "input_audio_buffer.append",
+                            "audio": data['media']['payload']
+                        }
+                        await openai_ws.send(json.dumps(audio_append))
+                    elif data['event'] == 'start':
+                        stream_sid = data['start']['streamSid']
+                        # Find the phone number from the stored mapping
+                        for phone, sid in session_store["phone_to_streamSid"].items():
+                            if sid is None:  # This is our pending call
+                                session_store["phone_to_streamSid"][phone] = stream_sid
+                                session_store["streamSid_to_phone"][stream_sid] = phone
+                                phone_number = phone
                                 break
+                        
+                        if phone_number:
+                            save_transcription(phone_number, "", "", stream_sid, is_start=True)
+                        print(f"Incoming stream has started {stream_sid}")
+                        response_start_timestamp_twilio = None
+                        latest_media_timestamp = 0
+                        last_assistant_item = None
+                    elif data['event'] == 'mark':
+                        if mark_queue:
+                            mark_queue.pop(0)
+            except WebSocketDisconnect:
+                if phone_number:
+                    save_transcription(phone_number, "", "", is_end=True)
+                print("Client disconnected.")
+                if openai_ws.open:
+                    await openai_ws.close()
 
-                    # Media Event: Process audio payload
-                    elif data["event"] == "media":
-                        audio_payload_base64 = data["media"]["payload"]  # Base64 string
-                        await openai_ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": audio_payload_base64}))
-
-
-            except Exception as e:
-                print(f"Error forwarding Twilio to OpenAI: {e}")
-
-
-        # Function to receive messages from OpenAI and handle them
-        async def receive_and_handle_from_openai():
+        async def send_to_twilio():
+            """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
+            nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio
             try:
-                conversation_file = f"conversations/{stream_sid}.txt"  # Create unique file per call
-                os.makedirs("conversations", exist_ok=True)  # Create directory if it doesn't exist
+                async for openai_message in openai_ws:
+                    response = json.loads(openai_message)
+                    phone_number = session_store["streamSid_to_phone"].get(stream_sid)
+                    if response['type'] in LOG_EVENT_TYPES:
+                        print(f"Received event: {response['type']}", response)
 
-                async for response in openai_ws:
-                    data = json.loads(response)
-                    
-                    # Handle user's completed transcription
-                    if data.get("type") == "conversation.item.input_audio_transcription.completed":
-                        user_transcription = data.get("transcript", "")
+                    # Handle user's completed transcript
+                    if response.get("type") == "conversation.item.input_audio_transcription.completed":
+                        user_transcription = response.get("transcript", "")
                         if user_transcription:
                             print(f"\nUser said: {user_transcription}")
-                            
-                            # Write to file
-                            with open(conversation_file, "a", encoding="utf-8") as f:
-                                f.write(f"User: {user_transcription}\n")
-                            # # Optionally store the transcription
-                            # if stream_sid in session_store["streamSid_to_phone"]:
-                            #     phone_number = session_store["streamSid_to_phone"][stream_sid]
-                            #     add_memory(phone_number, "user", user_transcription)
+                            save_transcription(phone_number, "User", user_transcription, stream_sid)
 
                     # Handle assistant's completed transcript
-                    elif data.get("type") == "response.audio_transcript.done":
-                        assistant_transcript = data.get("transcript", "")
+                    if response.get("type") == "response.audio_transcript.done":
+                        assistant_transcript = response.get("transcript", "")
                         if assistant_transcript:
                             print(f"\nAssistant: {assistant_transcript}\n")
                             # Write to file
-                            with open(conversation_file, "a", encoding="utf-8") as f:
-                                f.write(f"Assistant: {assistant_transcript}\n\n")
+                            save_transcription(phone_number, "Assistant", assistant_transcript, stream_sid)
 
-                    # Handle audio payload (needed for voice output)
-                    elif data.get("type") == "response.audio.delta" and "delta" in data:
-                        audio_payload = data["delta"]
-                        await websocket.send_json({
+                    if response.get('type') == 'response.audio.delta' and 'delta' in response:
+                        audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
+                        audio_delta = {
                             "event": "media",
                             "streamSid": stream_sid,
-                            "media": {"payload": audio_payload}
-                        })
+                            "media": {
+                                "payload": audio_payload
+                            }
+                        }
+                        await websocket.send_json(audio_delta)
 
+                        if response_start_timestamp_twilio is None:
+                            response_start_timestamp_twilio = latest_media_timestamp
+                            if SHOW_TIMING_MATH:
+                                print(f"Setting start timestamp for new response: {response_start_timestamp_twilio}ms")
+
+                        # Update last_assistant_item safely
+                        if response.get('item_id'):
+                            last_assistant_item = response['item_id']
+
+                        await send_mark(websocket, stream_sid)
+
+                    # Trigger an interruption. Your use case might work better using `input_audio_buffer.speech_stopped`, or combining the two.
+                    if response.get('type') == 'input_audio_buffer.speech_started':
+                        print("Speech started detected.")
+                        if last_assistant_item:
+                            print(f"Interrupting response with id: {last_assistant_item}")
+                            await handle_speech_started_event()
             except Exception as e:
-                print(f"Error receiving from OpenAI: {e}")
+                print(f"Error in send_to_twilio: {e}")
 
-        await asyncio.gather(
-            forward_twilio_to_openai(),
-            receive_and_handle_from_openai(),
-        )
+        async def handle_speech_started_event():
+            """Handle interruption when the caller's speech starts."""
+            nonlocal response_start_timestamp_twilio, last_assistant_item
+            print("Handling speech started event.")
+            if mark_queue and response_start_timestamp_twilio is not None:
+                elapsed_time = latest_media_timestamp - response_start_timestamp_twilio
+                if SHOW_TIMING_MATH:
+                    print(f"Calculating elapsed time for truncation: {latest_media_timestamp} - {response_start_timestamp_twilio} = {elapsed_time}ms")
 
-        # Cleanup session_store entry after connection closes
-        if stream_sid in session_store["streamSid_to_phone"]:
-            phone_number = session_store["streamSid_to_phone"].pop(stream_sid, None)
-            if phone_number:
-                session_store["phone_to_streamSid"].pop(phone_number, None)
-                print(f"Cleaned up session for phone number: {phone_number}")
+                if last_assistant_item:
+                    if SHOW_TIMING_MATH:
+                        print(f"Truncating item with ID: {last_assistant_item}, Truncated at: {elapsed_time}ms")
 
+                    truncate_event = {
+                        "type": "conversation.item.truncate",
+                        "item_id": last_assistant_item,
+                        "content_index": 0,
+                        "audio_end_ms": elapsed_time
+                    }
+                    await openai_ws.send(json.dumps(truncate_event))
+
+                await websocket.send_json({
+                    "event": "clear",
+                    "streamSid": stream_sid
+                })
+
+                mark_queue.clear()
+                last_assistant_item = None
+                response_start_timestamp_twilio = None
+
+        async def send_mark(connection, stream_sid):
+            if stream_sid:
+                mark_event = {
+                    "event": "mark",
+                    "streamSid": stream_sid,
+                    "mark": {"name": "responsePart"}
+                }
+                await connection.send_json(mark_event)
+                mark_queue.append('responsePart')
+
+        await asyncio.gather(receive_from_twilio(), send_to_twilio())
 
 
 async def initialize_session(openai_ws):
