@@ -223,17 +223,18 @@ async def handle_media_stream(websocket: WebSocket):
                     if response.get("type") == "conversation.item.input_audio_transcription.completed":
                         user_transcription = response.get("transcript", "")
                         if user_transcription:
+                            phone_number = session_store["streamSid_to_phone"].get(stream_sid)
                             print(f"\nUser said: {user_transcription}")
-                            save_transcription(phone_number, "User", transcription)
+                            save_transcription(phone_number, "User", user_transcription)
 
 
-                    if response.get('type') == 'input_audio_buffer.transcription':
-                        transcription = response.get('text', '')
-                        phone_number = session_store["streamSid_to_phone"].get(stream_sid)
-                        if phone_number and transcription:
-                            print(f"User said: {transcription}")
-                            # Store in memory
-                            #add_memory(phone_number, "user", transcription)
+                    # if response.get('type') == 'input_audio_buffer.transcription':
+                    #     transcription = response.get('text', '')
+                    #     phone_number = session_store["streamSid_to_phone"].get(stream_sid)
+                    #     if phone_number and transcription:
+                    #         print(f"User said: {transcription}")
+                    #         # Store in memory
+                    #         #add_memory(phone_number, "user", transcription)
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
