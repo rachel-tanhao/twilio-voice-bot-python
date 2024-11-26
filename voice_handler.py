@@ -12,6 +12,8 @@ import re
 import openai
 from memory_manager import add_memory
 import base64
+from datetime import datetime
+import os
 
 # Load environment variables
 load_dotenv()
@@ -110,14 +112,29 @@ async def handle_audio_transcribe_and_store(phone_number: str, audio_bytes: byte
             raise RuntimeError("Transcription is empty or invalid.")
 
         # Add transcription to memory
-        add_memory(phone_number, "user", transcription)
+        #add_memory(phone_number, "user", transcription)
         print(f"Stored transcription for {phone_number}: {transcription}")
         return transcription
     except Exception as e:
         print(f"Error handling audio transcription: {e}")
         return None
 
-
+def save_transcription(phone_number: str, speaker: str, text: str):
+    """Save transcription to a file with timestamp."""
+    # Create logs directory if it doesn't exist
+    os.makedirs('transcription_logs', exist_ok=True)
+    
+    # Create filename with date
+    date = datetime.now().strftime('%Y-%m-%d')
+    filename = f'transcription_logs/{phone_number}_{date}.txt'
+    
+    # Add timestamp to message
+    timestamp = datetime.now().strftime('%H:%M:%S')
+    message = f'[{timestamp}] {speaker}: {text}\n'
+    
+    # Append to file
+    with open(filename, 'a', encoding='utf-8') as f:
+        f.write(message)
 
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
@@ -203,13 +220,20 @@ async def handle_media_stream(websocket: WebSocket):
                     if response['type'] in LOG_EVENT_TYPES:
                         print(f"Received event: {response['type']}", response)
 
+                    if response.get("type") == "conversation.item.input_audio_transcription.completed":
+                        user_transcription = response.get("transcript", "")
+                        if user_transcription:
+                            print(f"\nUser said: {user_transcription}")
+                            save_transcription(phone_number, "User", transcription)
+
+
                     if response.get('type') == 'input_audio_buffer.transcription':
                         transcription = response.get('text', '')
                         phone_number = session_store["streamSid_to_phone"].get(stream_sid)
                         if phone_number and transcription:
                             print(f"User said: {transcription}")
                             # Store in memory
-                            add_memory(phone_number, "user", transcription)
+                            #add_memory(phone_number, "user", transcription)
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
