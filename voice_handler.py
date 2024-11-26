@@ -71,44 +71,48 @@ async def index():
     """Health check endpoint."""
     return {"message": "Twilio Media Stream Server is running!"}
 
-def get_recent_conversation_history(phone_number: str, max_conversations: int = 1, max_lines: int = 50) -> str:
+def get_recent_conversation_history(phone_number: str, max_conversations: int = 5, max_lines: int = 50) -> str:
     """
     Retrieve recent conversation history from transcription logs.
-    Args:
-        phone_number: The user's phone number
-        max_conversations: Maximum number of previous conversations to include
-        max_lines: Maximum number of lines to include per conversation
     """
     transcription_dir = Path('transcription_logs')
+    print(f"\nLooking for conversation history in: {transcription_dir}")
     if not transcription_dir.exists():
+        print("Transcription directory doesn't exist")
         return ""
     
     # Get all files for this phone number, sorted by modification time (newest first)
     files = [f for f in transcription_dir.iterdir() if f.name.startswith(phone_number)]
+    print(f"Found files for {phone_number}: {[f.name for f in files]}")
     files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
     
     history = []
     for file in files[:max_conversations]:
-        conversation = []
         try:
+            print(f"Reading file: {file}")
             with open(file, 'r', encoding='utf-8') as f:
                 lines = [line.strip() for line in f.readlines() if line.strip()]
                 # Filter out conversation start/end markers and keep only dialogue
                 dialogue_lines = [line for line in lines 
                                 if not line.startswith('===') 
                                 and not line.endswith('===')]
-                conversation.extend(dialogue_lines[-max_lines:])  # Get most recent lines
+                print(f"Found {len(dialogue_lines)} lines of dialogue")
+                if dialogue_lines:  # Only add non-empty conversations
+                    history.append("\n".join(dialogue_lines[-max_lines:]))  # Get most recent lines
         except Exception as e:
             print(f"Error reading file {file}: {e}")
             continue
-        
-        if conversation:
-            history.append("\n".join(conversation))
     
     if not history:
+        print("No history found")
         return ""
     
-    return "\n\nPrevious conversation history:\n" + "\n\n---\n\n".join(history)
+    print("\n\nUSING CONVERSATION HISTORY \n\n")
+    # Print a sample of the history for debugging
+    final_history = "\n\nPrevious conversation history:\n" + "\n\n---\n\n".join(history)
+    print("Sample of conversation history:")
+    print(final_history[:200] + "...")  # Print first 200 characters
+    return final_history
 
 # Add this function after the existing imports
 def has_previous_calls(phone_number: str) -> bool:
@@ -136,9 +140,12 @@ For returning users, begin with something like:
 ''' if is_returning_user else SYSTEM_MESSAGE
 
     if is_returning_user and phone_number:
+        print(f"\nGetting conversation history for returning user: {phone_number}")
+
         conversation_history = get_recent_conversation_history(phone_number)
         if conversation_history:
-            print("\n\nUSING CONVERSATION HISTORY \n\n")
+            print(f"Adding conversation history to system message. {conversation_history}")
+
             base_message += f"\n\nUse the following conversation history to provide context and personalization to your responses. Reference previous topics naturally, but don't explicitly mention that you're using conversation history:{conversation_history}"
     
     return base_message
@@ -200,6 +207,8 @@ def save_transcription(phone_number: str, speaker: str, text: str, stream_sid, i
     
     date = datetime.now().strftime('%Y-%m-%d')
     filename = f'transcription_logs/{phone_number}_{date}_{stream_sid}.txt'
+    print(f"Saving transcription to: {filename}")  # Debug print
+
     timestamp = datetime.now().strftime('%H:%M:%S')
     
     # Special messages for start/end of conversation
@@ -405,12 +414,20 @@ async def handle_media_stream(websocket: WebSocket):
 async def initialize_session(openai_ws):
     """Initialize OpenAI session."""
 
-        # Check if user has previous calls
+    # Check if user has previous calls
     phone_number = None
     for phone, sid in session_store["phone_to_streamSid"].items():
         if sid is None:
             phone_number = phone
             break
+    print(session_store["phone_to_streamSid"].items())
+    print(f"\nChecking for previous calls for phone number: {phone_number}")
+    is_returning_user = has_previous_calls(phone_number) if phone_number else False
+    print(f"Is returning user: {is_returning_user}")
+    
+    system_message = get_system_message(is_returning_user, phone_number)
+    print(f"\nSystem message length: {len(system_message)}")
+    print("First 100 characters of system message:", system_message[:100])
     
     is_returning_user = has_previous_calls(phone_number) if phone_number else False
 
