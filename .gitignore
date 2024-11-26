@@ -50,3 +50,5 @@ target/
 .nuxt/
 .gitignore_backup
 /.venv
+
+notes.txt

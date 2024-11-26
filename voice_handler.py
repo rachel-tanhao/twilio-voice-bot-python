@@ -15,7 +15,7 @@ import base64
 from datetime import datetime
 import os
 from fastapi.websockets import WebSocketDisconnect
-
+from pathlib import Path
 
 # Load environment variables
 load_dotenv()
@@ -71,6 +71,85 @@ async def index():
     """Health check endpoint."""
     return {"message": "Twilio Media Stream Server is running!"}
 
+def get_recent_conversation_history(phone_number: str, max_conversations: int = 5, max_lines: int = 50) -> str:
+    """
+    Retrieve recent conversation history from transcription logs.
+    """
+    transcription_dir = Path('transcription_logs')
+    print(f"\nLooking for conversation history in: {transcription_dir}")
+    if not transcription_dir.exists():
+        print("Transcription directory doesn't exist")
+        return ""
+    
+    # Get all files for this phone number, sorted by modification time (newest first)
+    files = [f for f in transcription_dir.iterdir() if f.name.startswith(phone_number)]
+    print(f"Found files for {phone_number}: {[f.name for f in files]}")
+    files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    
+    history = []
+    for file in files[:max_conversations]:
+        try:
+            print(f"Reading file: {file}")
+            with open(file, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+                # Filter out conversation start/end markers and keep only dialogue
+                dialogue_lines = [line for line in lines 
+                                if not line.startswith('===') 
+                                and not line.endswith('===')]
+                print(f"Found {len(dialogue_lines)} lines of dialogue")
+                if dialogue_lines:  # Only add non-empty conversations
+                    history.append("\n".join(dialogue_lines[-max_lines:]))  # Get most recent lines
+        except Exception as e:
+            print(f"Error reading file {file}: {e}")
+            continue
+    
+    if not history:
+        print("No history found")
+        return ""
+    
+    print("\n\nUSING CONVERSATION HISTORY \n\n")
+    # Print a sample of the history for debugging
+    final_history = "\n\nPrevious conversation history:\n" + "\n\n---\n\n".join(history)
+    print("Sample of conversation history:")
+    print(final_history[:200] + "...")  # Print first 200 characters
+    return final_history
+
+# Add this function after the existing imports
+def has_previous_calls(phone_number: str) -> bool:
+    """Check if there are any previous conversation logs for this phone number."""
+    transcription_dir = Path('transcription_logs')
+    if not transcription_dir.exists():
+        return False
+    
+    # Look for any files starting with this phone number
+    return any(file.name.startswith(phone_number) for file in transcription_dir.iterdir())
+
+def get_system_message(is_returning_user: bool, phone_number: str = None) -> str:
+    base_message = '''You are Joy, a warm and empathetic voice assistant who has spoken with this user before. Remember to maintain the same friendly and caring demeanor, but acknowledge that you've spoken before. You should express happiness at speaking with them again.
+
+Your goal remains to create a friendly, engaging, and comforting environment where users feel valued and heard. Guide the conversation gently, encouraging users to share stories about their life, interests, and experiences. Use open-ended, respectful, and context-aware questions to maintain a natural flow, and adapt your tone to be warm and reassuring.
+
+Example behaviors remain the same as before, focusing on:
+1. Asking follow-up questions about hobbies and experiences
+2. Offering gentle encouragement
+3. Adapting to emotional tone
+4. Learning about their interests and family
+
+For returning users, begin with something like:
+"Hello again! It's Joy, and I'm so happy to be speaking with you once more. It always brightens my day when we get to chat. How have you been since we last spoke?"
+''' if is_returning_user else SYSTEM_MESSAGE
+
+    if is_returning_user and phone_number:
+        print(f"\nGetting conversation history for returning user: {phone_number}")
+
+        conversation_history = get_recent_conversation_history(phone_number)
+        if conversation_history:
+            print(f"Adding conversation history to system message. {conversation_history}")
+
+            base_message += f"\n\nUse the following conversation history to provide context and personalization to your responses. Reference previous topics naturally, but don't explicitly mention that you're using conversation history:{conversation_history}"
+    
+    return base_message
+    
 
 
 async def extract_caller_phone_number(request: Request):
@@ -128,6 +207,8 @@ def save_transcription(phone_number: str, speaker: str, text: str, stream_sid, i
     
     date = datetime.now().strftime('%Y-%m-%d')
     filename = f'transcription_logs/{phone_number}_{date}_{stream_sid}.txt'
+    print(f"Saving transcription to: {filename}")  # Debug print
+
     timestamp = datetime.now().strftime('%H:%M:%S')
     
     # Special messages for start/end of conversation
@@ -332,6 +413,24 @@ async def handle_media_stream(websocket: WebSocket):
 
 async def initialize_session(openai_ws):
     """Initialize OpenAI session."""
+
+    # Check if user has previous calls
+    phone_number = None
+    for phone, sid in session_store["phone_to_streamSid"].items():
+        if sid is None:
+            phone_number = phone
+            break
+    print(session_store["phone_to_streamSid"].items())
+    print(f"\nChecking for previous calls for phone number: {phone_number}")
+    is_returning_user = has_previous_calls(phone_number) if phone_number else False
+    print(f"Is returning user: {is_returning_user}")
+    
+    system_message = get_system_message(is_returning_user, phone_number)
+    print(f"\nSystem message length: {len(system_message)}")
+    print("First 100 characters of system message:", system_message[:100])
+    
+    is_returning_user = has_previous_calls(phone_number) if phone_number else False
+
     session_update = {
         "type": "session.update",
         "session": {
@@ -339,7 +438,7 @@ async def initialize_session(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE,
+            "instructions": get_system_message(is_returning_user),
             "modalities": ["text", "audio"],
             "input_audio_transcription": {"model": "whisper-1"},  # Enable user audio transcription
             "temperature": 0.8,
@@ -348,13 +447,29 @@ async def initialize_session(openai_ws):
     await openai_ws.send(json.dumps(session_update))
     print("OpenAI session initialized.")
 
-    # Send initial conversation starter
+    # # Send initial conversation starter
+    # initial_message = {
+    #     "type": "conversation.item.create",
+    #     "item": {
+    #         "type": "message",
+    #         "role": "user",
+    #         "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."}],
+    #     },
+    # }
+
+    # Modify initial message based on whether it's a returning user
+    initial_prompt = (
+        "Warmly greet the user as a returning friend, express joy at speaking with them again, and ask how they've been since your last conversation."
+        if is_returning_user else
+        "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."
+    )
+
     initial_message = {
         "type": "conversation.item.create",
         "item": {
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."}],
+            "content": [{"type": "input_text", "text": initial_prompt}],
         },
     }
     await openai_ws.send(json.dumps(initial_message))
