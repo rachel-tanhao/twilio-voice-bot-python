@@ -18,10 +18,6 @@ def add_memory(phone_number: str, role: str, content: str):
     :param content: Message content to be stored (must be a string).
     """
     try:
-        # Validate content is a string
-        if not isinstance(content, str):
-            raise ValueError(f"Content must be a string, got {type(content)}: {content}")
-
         # Prepare the payload for Mem0
         messages = [{"role": role, "content": content}]
 
@@ -31,7 +27,6 @@ def add_memory(phone_number: str, role: str, content: str):
             user_id=phone_number,
         )
 
-        print(f"Memory added for {phone_number}: {response}")
     except Exception as e:
         print(f"Error adding memory for {phone_number}: {e}")
 
@@ -47,10 +42,10 @@ def get_memory_context(phone_number, limit=10):
     try:
         # Fetch all memories for the user
         memories = mem0_client.get_all(user_id=phone_number)
-        print(f"Fetched memories for {phone_number}: {memories}")  # Debug the response
+        # print(f"Fetched memories for {phone_number}: {memories}")  # Debug the response
 
-        # Return the most recent `limit` memories
-        return [memory["data"]["memory"] for memory in memories[-limit:]]
+        # Extract the 'memory' key from each fetched memory and limit the results
+        return [memory["memory"] for memory in memories[-limit:]]
     except Exception as e:
         print(f"Error retrieving context for {phone_number}: {e}")
         return []
@@ -71,3 +66,5 @@ def clear_memory(phone_number):
         print(f"Memory cleared for {phone_number}")
     except Exception as e:
         print(f"Error clearing memory for {phone_number}: {e}")
+
+

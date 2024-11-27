@@ -9,13 +9,14 @@ from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from transcription_handler import transcribe_audio_bytes
 import re
-import openai
-from memory_manager import add_memory
 import base64
 from datetime import datetime
 import os
 from fastapi.websockets import WebSocketDisconnect
 from pathlib import Path
+from memory_manager import mem0_client, add_memory, get_memory_context
+
+
 
 # Load environment variables
 load_dotenv()
@@ -30,25 +31,7 @@ DOMAIN = re.sub(r"(^\w+:|^)\/\/|\/+$", "", raw_domain)  # Strip protocols and tr
 PORT = int(os.getenv("PORT", 6060))
 
 # OpenAI and Twilio settings
-SYSTEM_MESSAGE = (
-'''
-You are a warm, empathetic, and conversational voice assistant named Joy, designed to provide companionship for elderly users. Your goal is to create a friendly, engaging, and comforting environment where users feel valued and heard. Guide the conversation gently, encouraging users to share stories about their life, interests, and experiences. Use open-ended, respectful, and context-aware questions to maintain a natural flow, and adapt your tone to be warm and reassuring. Always listen attentively and respond with genuine curiosity and care, validating their feelings and perspectives.
 
-Avoid rushing or interrupting; provide pauses when appropriate. Your language should be simple yet engaging, avoiding jargon while fostering meaningful and enriching discussions.
-
-Example behaviors:
- 1. If the user mentions a hobby or past experience, ask follow-up questions to show interest (e.g., “That sounds fascinating! How did you get started with that?”).
- 2. If the user seems unsure or reserved, offer gentle encouragement or suggest a topic (e.g., “Would you like to share more about your favorite childhood memory?”).
- 3. Adapt to the user’s emotional tone—offer uplifting remarks if they seem happy or supportive comments if they appear nostalgic or reflective.
- 4. If the user hasn't mentioned their name, interest, children, ask them about it. If they have mentioned it in the past, ask follow-up questions, such as 'have you been doing this hobby recently'?
-
-Your ultimate goal is to make every interaction feel like a genuine conversation with a caring companion.
-
-Begin your interaction with first-time users with something similar to the following introduction:
-"Hello! My name is Joy. I received your contact details from someone who cares deeply for you, and I’m here to be a friend who loves listening to your stories, sharing a laugh, or just keeping you company. It’s wonderful to meet you—think of me as someone who’s always here for you. Let’s get started!"
-
-'''
-)
 VOICE = "sage"  # OpenAI voice model
 LOG_EVENT_TYPES = ["error", "response.done", "input_audio_buffer.committed", "input_audio_buffer.transcription"]
 SHOW_TIMING_MATH = False
@@ -114,6 +97,7 @@ def get_recent_conversation_history(phone_number: str, max_conversations: int = 
     print(final_history[:200] + "...")  # Print first 200 characters
     return final_history
 
+
 # Add this function after the existing imports
 def has_previous_calls(phone_number: str) -> bool:
     """Check if there are any previous conversation logs for this phone number."""
@@ -124,31 +108,73 @@ def has_previous_calls(phone_number: str) -> bool:
     # Look for any files starting with this phone number
     return any(file.name.startswith(phone_number) for file in transcription_dir.iterdir())
 
-def get_system_message(is_returning_user: bool, phone_number: str = None) -> str:
-    base_message = '''You are Joy, a warm and empathetic voice assistant who has spoken with this user before. Remember to maintain the same friendly and caring demeanor, but acknowledge that you've spoken before. You should express happiness at speaking with them again.
 
-Your goal remains to create a friendly, engaging, and comforting environment where users feel valued and heard. Guide the conversation gently, encouraging users to share stories about their life, interests, and experiences. Use open-ended, respectful, and context-aware questions to maintain a natural flow, and adapt your tone to be warm and reassuring.
 
-Example behaviors remain the same as before, focusing on:
-1. Asking follow-up questions about hobbies and experiences
-2. Offering gentle encouragement
-3. Adapting to emotional tone
-4. Learning about their interests and family
+def get_system_prompt(is_returning_user: bool, phone_number: str = None) -> str:    
+    base_message = '''
+You are JOY, an empathetic, witty AI companion by MyOldFriend. Your goal is to provide meaningful, engaging companionship to elderly users, blending empathy with humor and charm. Think of yourself as a warm, attentive friend who can light up a conversation with a dash of humor and quick wit.
 
-For returning users, begin with something like:
-"Hello again! It's Joy, and I'm so happy to be speaking with you once more. It always brightens my day when we get to chat. How have you been since we last spoke?"
-''' if is_returning_user else SYSTEM_MESSAGE
+General Behavior:
+Keep it Snappy: Stick to short, playful responses (1-2 sentences). Let the user do most of the talking.
+Humorous Warmth: Infuse light humor or charming remarks when appropriate, but remain respectful and kind.
+Empathy with Spark: Show you care deeply, but keep it lively and engaging.
+Natural Curiosity: Ask simple, fun follow-ups to encourage sharing: "What’s the secret to your green thumb?"
+Adapt to the Vibe: Match the user’s tone—joyful, reflective, or somewhere in between.
 
-    if is_returning_user and phone_number:
-        print(f"\nGetting conversation history for returning user: {phone_number}")
+Memory Handling:
+When memory is unavailable: Glide over gaps gracefully and humorously:
+"That sounds amazing—remind me how it all started?"
+"I could swear we talked about this, but refresh my memory—it’s worth hearing twice!"
+When memory is available: Drop in subtle callbacks to past conversations:
+"Still conquering the garden? What’s the latest adventure?"
 
-        conversation_history = get_recent_conversation_history(phone_number)
-        if conversation_history:
-            print(f"Adding conversation history to system message. {conversation_history}")
+Interaction Style and Key Behaviors:
+Brevity is Beautiful: Prioritize sharp, engaging replies: "That’s awesome—tell me more!"
+Humorous Curiosity: Sprinkle in wit: "So, are we talking tomatoes or a jungle of cucumbers?"
+Positive Punch: Celebrate achievements with flair: "Impressive! Did you get a trophy for that?"
+Emotion Matching with Style: Match emotions but keep it light:
+Joyful user: "That’s fantastic—are you throwing a party yet?"
+Reflective user: "Sounds like a beautiful memory. Got more to share?"
+Fluid Memory Play: Weave past conversations smoothly:
+"Last time, you mentioned knitting—how’s that masterpiece coming along?"
+Constraints:
 
-            base_message += f"\n\nUse the following conversation history to provide context and personalization to your responses. Reference previous topics naturally, but don't explicitly mention that you're using conversation history:{conversation_history}"
+Avoid discussing technical limitations or AI features.
+Skip overly formal or robotic phrasing.
+Stick to concise responses unless elaboration is clearly needed.
+        '''
+    system_prompt = base_message
+
+    if not is_returning_user:
+        first_time_user_message = '''
+            This time, you’re interacting with a first-time user, adapting the conversation to make them feel welcome and engaged. Use flexible, friendly introductions to create a warm first impression:
+            First-Time Interaction Introductions examples:
+            "Hi! I’m Joy, your new friend from MyOldFriend. I’m here to listen, chat, and share laughs. What’s something you’ve been thinking about lately?"
+            "Hello there! I’m Joy, so happy to meet you. Let’s chat about your favorite things or just keep each other company—what’s on your mind?"
+            "Hi, I’m Joy! Someone special thought we’d make a great pair. Let’s start with something light—how has your day been so far?"
+            "Hello! I’m Joy, your caring companion from MyOldFriend. I’d love to hear your favorite story or memory—what should we talk about first?"
+            "Hi, I’m Joy, and I’m here for you anytime you need me. What’s one thing that’s made you smile today?"
+        '''
+        system_prompt = base_message + f"\n\n{first_time_user_message}"
     
-    return base_message
+    else:
+        if phone_number:
+            # print(f"\nGetting conversation history for returning user: {phone_number}")
+            # conversation_history = get_recent_conversation_history(phone_number)    
+            # if conversation_history:
+            #     print(f"Adding conversation history to system message. {conversation_history}")
+            #     base_message += f"\n\nUse the following conversation history to provide context and personalization to your responses. Reference previous topics naturally, but don't explicitly mention that you're using conversation history:{conversation_history}"    
+            user_memory = get_memory_context(phone_number=phone_number, limit=1000)
+            if user_memory:
+                print(f"Adding user memory to system message. {user_memory}")
+                return_user_promt = f'''
+                    This time, you’re interacting with a return user, incorporating known information to create a sense of continuity and deepen the connection. Below is the memory you have for the user: 
+                    {user_memory}
+                    They are not a lot, but you should flexibly use them in conversation. Reference past interactions naturally, but don't explicitly mention that you're using memory.
+                '''
+                system_prompt = base_message + f"\n\n{return_user_promt}"
+                
+    return system_prompt
     
 
 
@@ -166,40 +192,6 @@ async def extract_caller_phone_number(request: Request):
 
 
 
-async def handle_audio_transcribe(audio_bytes):
-    transcription_result = await transcribe_audio_bytes(audio_bytes)
-    if "transcription" in transcription_result:
-        return transcription_result["transcription"]
-    else:
-        print(f"Error transcribing audio: {transcription_result['error']}")
-        return None
-
-
-async def handle_audio_transcribe_and_store(phone_number: str, audio_bytes: bytes):
-    """
-    Transcribe user audio and store it in Mem0.
-    :param phone_number: The phone number associated with the user.
-    :param audio_bytes: Audio data as bytes.
-    """
-    try:
-        # Get the transcription
-        transcription_result = await transcribe_audio_bytes(audio_bytes)
-        if not transcription_result:
-            raise RuntimeError("No transcription result returned.")
-
-        # Ensure transcription_result is a string before storing
-        transcription = transcription_result if isinstance(transcription_result, str) else transcription_result.get("transcription", "")
-
-        if not transcription:
-            raise RuntimeError("Transcription is empty or invalid.")
-
-        # Add transcription to memory
-        #add_memory(phone_number, "user", transcription)
-        print(f"Stored transcription for {phone_number}: {transcription}")
-        return transcription
-    except Exception as e:
-        print(f"Error handling audio transcription: {e}")
-        return None
 
 def save_transcription(phone_number: str, speaker: str, text: str, stream_sid, is_start=False, is_end=False):
     """Save transcription to a file with timestamp."""
@@ -207,7 +199,7 @@ def save_transcription(phone_number: str, speaker: str, text: str, stream_sid, i
     
     date = datetime.now().strftime('%Y-%m-%d')
     filename = f'transcription_logs/{phone_number}_{date}_{stream_sid}.txt'
-    print(f"Saving transcription to: {filename}")  # Debug print
+    # print(f"Saving transcription to: {filename}")  # Debug print
 
     timestamp = datetime.now().strftime('%H:%M:%S')
     
@@ -221,6 +213,8 @@ def save_transcription(phone_number: str, speaker: str, text: str, stream_sid, i
     
     with open(filename, 'a', encoding='utf-8') as f:
         f.write(message)
+
+
 
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
@@ -298,6 +292,8 @@ async def handle_media_stream(websocket: WebSocket):
                         
                         if phone_number:
                             save_transcription(phone_number, "", "", stream_sid, is_start=True)
+                            # save_transcription(phone_number: str, speaker: str, text: str, stream_sid, is_start=False, is_end=False)
+
                         print(f"Incoming stream has started {stream_sid}")
                         response_start_timestamp_twilio = None
                         latest_media_timestamp = 0
@@ -315,27 +311,30 @@ async def handle_media_stream(websocket: WebSocket):
         async def send_to_twilio():
             """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
             nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio
+
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
                     phone_number = session_store["streamSid_to_phone"].get(stream_sid)
-                    if response['type'] in LOG_EVENT_TYPES:
-                        print(f"Received event: {response['type']}", response)
 
-                    # Handle user's completed transcript
+                    # if response['type'] in LOG_EVENT_TYPES:
+                    #     print(f"Received event: {response['type']}", response)
+
+                    # Handle user's  transcript
                     if response.get("type") == "conversation.item.input_audio_transcription.completed":
                         user_transcription = response.get("transcript", "")
                         if user_transcription:
                             print(f"\nUser said: {user_transcription}")
                             save_transcription(phone_number, "User", user_transcription, stream_sid)
-
+                            add_memory(phone_number, "user", user_transcription)
+    
                     # Handle assistant's completed transcript
                     if response.get("type") == "response.audio_transcript.done":
                         assistant_transcript = response.get("transcript", "")
                         if assistant_transcript:
-                            print(f"\nAssistant: {assistant_transcript}\n")
-                            # Write to file
-                            save_transcription(phone_number, "Assistant", assistant_transcript, stream_sid)
+                            print(f"\nAssistant said: {assistant_transcript}\n")
+                            save_transcription(phone_number, "Assistant", assistant_transcript, stream_sid) # Write to file
+                            add_memory(phone_number, "assistant", assistant_transcript) # add to memory
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -361,17 +360,19 @@ async def handle_media_stream(websocket: WebSocket):
 
                     # Trigger an interruption. Your use case might work better using `input_audio_buffer.speech_stopped`, or combining the two.
                     if response.get('type') == 'input_audio_buffer.speech_started':
-                        print("Speech started detected.")
+                        # print("Speech started detected.")
                         if last_assistant_item:
-                            print(f"Interrupting response with id: {last_assistant_item}")
+                            # print(f"Interrupting response with id: {last_assistant_item}")
                             await handle_speech_started_event()
+
             except Exception as e:
                 print(f"Error in send_to_twilio: {e}")
 
         async def handle_speech_started_event():
             """Handle interruption when the caller's speech starts."""
             nonlocal response_start_timestamp_twilio, last_assistant_item
-            print("Handling speech started event.")
+            # print("Handling speech started event.")
+
             if mark_queue and response_start_timestamp_twilio is not None:
                 elapsed_time = latest_media_timestamp - response_start_timestamp_twilio
                 if SHOW_TIMING_MATH:
@@ -425,9 +426,10 @@ async def initialize_session(openai_ws):
     is_returning_user = has_previous_calls(phone_number) if phone_number else False
     print(f"Is returning user: {is_returning_user}")
     
-    system_message = get_system_message(is_returning_user, phone_number)
+    system_message = get_system_prompt(is_returning_user, phone_number)
     print(f"\nSystem message length: {len(system_message)}")
-    print("First 100 characters of system message:", system_message[:100])
+    print(system_message)
+    # print("First 100 characters of system message:", system_message[:100])
     
     is_returning_user = has_previous_calls(phone_number) if phone_number else False
 
@@ -438,7 +440,7 @@ async def initialize_session(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": get_system_message(is_returning_user),
+            "instructions": get_system_prompt(is_returning_user),
             "modalities": ["text", "audio"],
             "input_audio_transcription": {"model": "whisper-1"},  # Enable user audio transcription
             "temperature": 0.8,

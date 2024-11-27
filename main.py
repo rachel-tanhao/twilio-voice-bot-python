@@ -4,6 +4,11 @@ import uvicorn
 
 app = FastAPI()
 
+# Define a root endpoint
+@app.get("/")
+async def read_root():
+    return {"message": "Media Stream Server is running!"}
+
 # 路由配置
 app.add_api_route("/incoming-call", handle_incoming_call, methods=["POST"])
 app.websocket("/media-stream")(handle_media_stream)
