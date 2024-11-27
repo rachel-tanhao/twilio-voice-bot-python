@@ -50,3 +50,5 @@ target/
 .nuxt/
 .gitignore_backup
 /.venv
+=1.0.0
+=1.33.0
