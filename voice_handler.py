@@ -480,21 +480,41 @@ async def initialize_session(openai_ws):
 
 
 
-async def make_call(phone_number: str):
-    """发起外呼"""
-    outbound_twiml = f"""
-    <Response>
-        <Connect>
-            <Stream url="wss://{DOMAIN}/media-stream" />
-        </Connect>
-    </Response>
-    """
-    call = client.calls.create(
-        from_=PHONE_NUMBER_FROM,
-        to=phone_number,
-        twiml=outbound_twiml,
-    )
-    return {"message": f"Call initiated to {phone_number}", "callSid": call.sid}
+# async def make_call(phone_number: str):
+#     """发起外呼"""
+#     outbound_twiml = f"""
+#     <Response>
+#         <Connect>
+#             <Stream url="wss://{DOMAIN}/media-stream" />
+#         </Connect>
+#     </Response>
+#     """
+#     call = client.calls.create(
+#         from_=PHONE_NUMBER_FROM,
+#         to=phone_number,
+#         twiml=outbound_twiml,
+#     )
+#     return {"message": f"Call initiated to {phone_number}", "callSid": call.sid}
+
+
+async def make_call(phone_number): # DOESNT WORK YET
+    """Make an outbound call to the specified phone number."""
+    try:
+        # Create the call using Twilio client
+        call = client.calls.create(
+            url=f'https://{DOMAIN}/incoming-call',
+            to=phone_number,
+            from_=PHONE_NUMBER_FROM
+        )
+        print(f"Initiated call to {phone_number}, SID: {call.sid}")
+        
+        # Wait for a moment to ensure the call connects
+        await asyncio.sleep(1)
+        
+        return call
+    except Exception as e:
+        print(f"Error making call to {phone_number}: {e}")
+        return None
 
 
 
