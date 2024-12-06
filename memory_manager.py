@@ -9,56 +9,75 @@ load_dotenv()
 MEM0_API_KEY = os.getenv("MEM0_API_KEY")
 mem0_client = MemoryClient(api_key=MEM0_API_KEY)
 
-
 def add_memory(phone_number: str, role: str, content: str):
     """
-    Add a message to a user's memory.
-    :param phone_number: The user's phone number (acts as user ID).
-    :param role: Role of the message sender ("user" or "assistant").
-    :param content: Message content to be stored (must be a string).
+    Add a message to a user's memory, with custom categories and custom prompt to 
+    guide Mem0 in extracting best call times or call preferences.
     """
     try:
         # Prepare the payload for Mem0
         messages = [{"role": role, "content": content}]
 
-        # Send to Mem0 API
+        custom_categories = [
+            {
+                "call_schedule": "Extract any mention of the best time for the user to receive calls, including preferred times or schedules."
+            }
+        ]
+
+        # 定义 custom_prompt
+        # 在这里提供few-shot示例，帮助mem0了解如何提取通话时间信息
+        custom_prompt = """
+            Please extract facts related to the user's best call time or call preferences.
+            If no call time is mentioned, return an empty facts array.
+
+            examples:
+
+            Input: "Call me at 9 AM tomorrow"
+            Output: {"facts": ["Best call time: 9 AM tomorrow"]}
+
+            Input: "Can you ring me in the afternoon?"
+            Output: {"facts": ["Potential call time: today afternoon"]}
+
+            Input: "I went to the park yesterday"
+            Output: {"facts": []}
+
+            Make sure to return the extracted facts in the json format as shown.
+        """
+
+        # includes参数，用来强化只存储和提取与通话时间相关的信息
+        includes = "best call time, user call schedule, preferred calling hours, call time preferences"
+
+        # 调用mem0的add方法时增加custom_categories, custom_prompt和includes
         response = mem0_client.add(
             messages=messages,
             user_id=phone_number,
+            custom_categories=custom_categories,
+            custom_prompt=custom_prompt,
+            includes=includes
         )
+        print(response)
 
     except Exception as e:
         print(f"Error adding memory for {phone_number}: {e}")
 
 
-
 def get_memory_context(phone_number, limit=10):
     """
     Retrieve the recent chat context for a user.
-    :param phone_number: The user's phone number (acts as user ID).
-    :param limit: Number of recent messages to retrieve.
-    :return: List of recent messages.
     """
     try:
-        # Fetch all memories for the user
         memories = mem0_client.get_all(user_id=phone_number)
-        # print(f"Fetched memories for {phone_number}: {memories}")  # Debug the response
-
-        # Extract the 'memory' key from each fetched memory and limit the results
         return [memory["memory"] for memory in memories[-limit:]]
     except Exception as e:
         print(f"Error retrieving context for {phone_number}: {e}")
         return []
 
 
-
 def clear_memory(phone_number):
     """
     Clear the chat history for a user by deleting each memory individually.
-    :param phone_number: The user's phone number (acts as user ID).
     """
     try:
-        # Fetch all memories for the user
         memories = mem0_client.get_all(user_id=phone_number)
         for memory in memories:
             memory_id = memory["id"]
@@ -66,5 +85,3 @@ def clear_memory(phone_number):
         print(f"Memory cleared for {phone_number}")
     except Exception as e:
         print(f"Error clearing memory for {phone_number}: {e}")
-
-
