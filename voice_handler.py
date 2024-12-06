@@ -480,21 +480,38 @@ async def initialize_session(openai_ws):
 
 
 
-async def make_call(phone_number: str):
-    """发起外呼"""
-    outbound_twiml = f"""
-    <Response>
-        <Connect>
-            <Stream url="wss://{DOMAIN}/media-stream" />
-        </Connect>
-    </Response>
-    """
-    call = client.calls.create(
-        from_=PHONE_NUMBER_FROM,
-        to=phone_number,
-        twiml=outbound_twiml,
-    )
-    return {"message": f"Call initiated to {phone_number}", "callSid": call.sid}
+async def make_call(request: Request):
+    """Initiate an outbound call"""
+    try:
+        data = await request.json()
+        phone_number = data.get('phone_number')
+        
+        if not phone_number:
+            return {"error": "Phone number is required", "status": 400}
+
+        # Store the phone number with a placeholder for future streamSid
+        session_store["phone_to_streamSid"][phone_number] = None
+        print(f"Outbound call to {phone_number}")
+
+        # Use the same TwiML as handle_incoming_call
+        response = VoiceResponse()
+        response.say("Welcome to My Old Friend")
+        response.pause(length=1)
+        connect = Connect()
+        connect.stream(url=f'wss://{DOMAIN}/media-stream')
+        response.append(connect)
+
+        # Make the call with the same TwiML
+        call = client.calls.create(
+            from_=PHONE_NUMBER_FROM,
+            to=phone_number,
+            twiml=str(response)
+        )
+        
+        return {"message": f"Call initiated to {phone_number}", "callSid": call.sid}
+    except Exception as e:
+        print(f"Error in make_call: {e}")
+        return {"error": str(e), "status": 500}
 
 
 
