@@ -50,13 +50,8 @@ target/
 .nuxt/
 .gitignore_backup
 /.venv
-<<<<<<< HEAD
-=1.0.0
-=1.33.0
-=======
 
 notes.txt
->>>>>>> 409f072468b7c46ee8696e1d007d5e1d503d6bd0
 =1.33.0
 =1.33.0
 =1.33.0
