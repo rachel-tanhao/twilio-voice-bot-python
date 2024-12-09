@@ -10,6 +10,8 @@ git commit -m "Updated code for deployment"
 
 git push heroku main
 
+heroku logs --tail
+
 
 
 How to run the project
