@@ -255,8 +255,12 @@ async def handle_media_stream(websocket: WebSocket):
             "OpenAI-Beta": "realtime=v1"
         }
     ) as openai_ws:
-        await initialize_session(openai_ws)
-
+        try:
+            await initialize_session(openai_ws)
+        except Exception as e:
+            print(f"Error initializing OpenAI session: {e}")
+            return
+        
         # Connection specific state
         stream_sid = None
         latest_media_timestamp = 0
@@ -440,7 +444,7 @@ async def initialize_session(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": get_system_prompt(is_returning_user),
+            "instructions": system_message,
             "modalities": ["text", "audio"],
             "input_audio_transcription": {"model": "whisper-1"},  # Enable user audio transcription
             "temperature": 0.8,
