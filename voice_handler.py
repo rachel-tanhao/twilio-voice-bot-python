@@ -319,8 +319,11 @@ async def handle_media_stream(websocket: WebSocket):
             try:
                 print("Starting to receive messages from OpenAI")
                 async for openai_message in openai_ws:
-                    print(f"Received message from OpenAI: {openai_message[:200]}")  # Add this
+                    print(f"Received message from OpenAI: {openai_message}") 
                     response = json.loads(openai_message)
+                    if 'response' in response and 'status_details' in response['response']:
+                        print("Full error details:", response['response']['status_details'])
+
                     phone_number = session_store["streamSid_to_phone"].get(stream_sid)
 
                     # if response['type'] in LOG_EVENT_TYPES:
@@ -344,7 +347,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         print("Received audio delta from OpenAI")
-                        audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
+                        audio_payload = response['delta']
                         audio_delta = {
                             "event": "media",
                             "streamSid": stream_sid,
