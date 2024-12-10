@@ -317,7 +317,9 @@ async def handle_media_stream(websocket: WebSocket):
             nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio
 
             try:
+                print("Starting to receive messages from OpenAI")
                 async for openai_message in openai_ws:
+                    print(f"Received message from OpenAI: {openai_message[:200]}")  # Add this
                     response = json.loads(openai_message)
                     phone_number = session_store["streamSid_to_phone"].get(stream_sid)
 
@@ -341,6 +343,7 @@ async def handle_media_stream(websocket: WebSocket):
                             add_memory(phone_number, "assistant", assistant_transcript) # add to memory
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
+                        print("Received audio delta from OpenAI")
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
                         audio_delta = {
                             "event": "media",
@@ -349,6 +352,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 "payload": audio_payload
                             }
                         }
+                        print("Sending audio to Twilio")
                         await websocket.send_json(audio_delta)
 
                         if response_start_timestamp_twilio is None:
@@ -450,19 +454,11 @@ async def initialize_session(openai_ws):
             "temperature": 0.8,
         },
     }
+    print("Sending session update to OpenAI")
     await openai_ws.send(json.dumps(session_update))
-    print("OpenAI session initialized.")
+    print("Session update sent successfully")
 
-    # # Send initial conversation starter
-    # initial_message = {
-    #     "type": "conversation.item.create",
-    #     "item": {
-    #         "type": "message",
-    #         "role": "user",
-    #         "content": [{"type": "input_text", "text": "Cheerfully greet the user with enthusiasm, introduce yourself, and let them know that you will always be their loyal companion. Happily ask the user how they are doing today."}],
-    #     },
-    # }
-
+    print("Sending initial message to OpenAI")
     # Modify initial message based on whether it's a returning user
     initial_prompt = (
         "Warmly greet the user as a returning friend, express joy at speaking with them again, and ask how they've been since your last conversation."
@@ -479,9 +475,11 @@ async def initialize_session(openai_ws):
         },
     }
     await openai_ws.send(json.dumps(initial_message))
-    await openai_ws.send(json.dumps({"type": "response.create"}))
-    print("Sent initial conversation starter.")
+    print("Initial message sent successfully")
 
+    print("Sending response create command")
+    await openai_ws.send(json.dumps({"type": "response.create"}))
+    print("Response create command sent successfully")
 
 
 async def make_call(request: Request):
