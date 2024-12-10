@@ -63,7 +63,17 @@ def get_memory_context(phone_number, limit=10):
     except Exception as e:
         print(f"Error retrieving context for {phone_number}: {e}")
         return []
-
+    
+def get_call_schedule(phone_number, limit=10):
+    """
+    Retrieve the recent chat context for a user.
+    """
+    try:
+        memories = mem0_client.get_all(user_id=phone_number)
+        return [memory["call_schedule"] for memory in memories[-limit:]]
+    except Exception as e:
+        print(f"Error retrieving context for {phone_number}: {e}")
+        return []
 
 def clear_memory(phone_number):
     """
