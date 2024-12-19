@@ -8,9 +8,9 @@ from voice_handler import make_call
 from memory_manager import get_call_schedule
 
 # Replace with the phone numbers you want to call
-PHONE_NUMBER1 = '+14452607227'  # Hao
-PHONE_NUMBER2 = '+12156005826'  # Steven
-TEST = '+18573523420'
+PHONE_NUMBER1 = '+'  # Hao
+PHONE_NUMBER2 = '+'  # Steven
+TEST = '+'
 
 def parse_time_from_text(text):
     """
